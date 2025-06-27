@@ -8,12 +8,36 @@ use crate::{
     types::Address,
 };
 use async_trait::async_trait;
+use base64::{engine::general_purpose::STANDARD, Engine};
 use malachitebft_app::{
     events::{RxEvent, TxEvent},
     node::{EngineHandle, Node, NodeHandle},
     types::Keypair,
 };
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+/// Tendermint-compatible private validator key file format
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrivateKeyFile {
+    pub address: String,
+    pub pub_key: TendermintPubKey,
+    pub priv_key: TendermintPrivKey,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TendermintPubKey {
+    #[serde(rename = "type")]
+    pub key_type: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TendermintPrivKey {
+    #[serde(rename = "type")]
+    pub key_type: String,
+    pub value: String,
+}
 
 /// Implementation of Malachite's Node trait for reth-malachite
 #[derive(Clone)]
@@ -70,7 +94,7 @@ impl Node for MalachiteNode {
     type Context = MalachiteContext;
     type Config = Config;
     type Genesis = Genesis;
-    type PrivateKeyFile = PrivateKey;
+    type PrivateKeyFile = PrivateKeyFile;
     type SigningProvider = Ed25519Provider;
     type NodeHandle = ConsensusHandle;
 
@@ -110,21 +134,39 @@ impl Node for MalachiteNode {
     }
 
     fn load_private_key(&self, file: Self::PrivateKeyFile) -> PrivateKey {
-        file
+        // Decode the private key from base64
+        let private_key_full = STANDARD
+            .decode(&file.priv_key.value)
+            .expect("Invalid base64 in private key");
+
+        // Tendermint format concatenates private key (32 bytes) + public key (32 bytes)
+        // Extract just the private key part
+        if private_key_full.len() != 64 {
+            panic!(
+                "Invalid private key length: expected 64 bytes, got {}",
+                private_key_full.len()
+            );
+        }
+
+        let mut private_key_bytes = [0u8; 32];
+        private_key_bytes.copy_from_slice(&private_key_full[..32]);
+
+        // Create PrivateKey from the raw bytes
+        PrivateKey::from(private_key_bytes)
     }
 
     fn load_private_key_file(&self) -> eyre::Result<Self::PrivateKeyFile> {
-        // For now, generate a new key if file doesn't exist
-        // In production, this would load from the file or error if not found
-        if self.private_key_file.exists() {
-            let contents = std::fs::read_to_string(&self.private_key_file)?;
-            let key: PrivateKey = serde_json::from_str(&contents)?;
-            Ok(key)
-        } else {
-            // Generate a new key for testing
-            let key = PrivateKey::generate(rand::thread_rng());
-            Ok(key)
+        if !self.private_key_file.exists() {
+            return Err(eyre::eyre!(
+                "Private validator key file not found at: {:?}",
+                self.private_key_file
+            ));
         }
+
+        let contents = std::fs::read_to_string(&self.private_key_file)?;
+        let key_file: PrivateKeyFile = serde_json::from_str(&contents)?;
+
+        Ok(key_file)
     }
 
     fn get_signing_provider(
