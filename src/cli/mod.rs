@@ -74,7 +74,7 @@ where
     }
 
     /// Execute the configured CLI command with the provided CliRunner
-    pub fn with_runner<L, Fut>(mut self, runner: reth::CliRunner, launcher: L) -> eyre::Result<()>
+    pub fn with_runner<L, Fut>(self, runner: reth::CliRunner, launcher: L) -> eyre::Result<()>
     where
         L: FnOnce(
             reth::builder::WithLaunchContext<
@@ -84,7 +84,6 @@ where
         ) -> Fut,
         Fut: std::future::Future<Output = eyre::Result<()>>,
     {
-
         let _guard = self.init_tracing()?;
         tracing::info!(target: "malachite::cli", "Initialized tracing, debug log directory: {}", self.logs.log_file_directory);
 
