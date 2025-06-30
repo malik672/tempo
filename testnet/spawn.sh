@@ -11,7 +11,7 @@ BLOCK_TIME=${BLOCK_TIME:-1s}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 NODES_DIR="$SCRIPT_DIR/nodes"
-BINARY="$PROJECT_ROOT/target/release/reth-malachite"
+BINARY="$PROJECT_ROOT/target/debug/reth-malachite"
 
 # Colors for output
 RED='\033[0;31m'
@@ -91,7 +91,7 @@ kill_reth_processes
 # Build the binary
 log "Building reth-malachite..."
 cd "$PROJECT_ROOT"
-cargo build --release
+cargo build
 if [ ! -f "$BINARY" ]; then
     error "Failed to build reth-malachite binary"
     exit 1
