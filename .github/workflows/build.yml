@@ -33,7 +33,7 @@ jobs:
       id: binary_upload
       with:
         name: tempo-x86_64-unknown-linux-gnu
-        path: target/x86_64-unknown-linux-gnu/release/reth-malachite
+        path: target/x86_64-unknown-linux-gnu/release/tempo
   deploy:
     name: Deploy to devnet-1
     runs-on: depot-ubuntu-24.04-4
