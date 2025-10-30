@@ -171,7 +171,7 @@ impl<'a, S: PrecompileStorageProvider> StablecoinExchange<'a, S> {
     ) -> Result<(), TempoPrecompileError> {
         if token == LINKING_USD_ADDRESS {
             LinkingUSD::new(self.storage).transfer(
-                &self.address,
+                self.address,
                 ITIP20::transferCall {
                     to,
                     amount: U256::from(amount),
@@ -179,7 +179,7 @@ impl<'a, S: PrecompileStorageProvider> StablecoinExchange<'a, S> {
             )?;
         } else {
             TIP20Token::from_address(token, self.storage).transfer(
-                &self.address,
+                self.address,
                 ITIP20::transferCall {
                     to,
                     amount: U256::from(amount),
@@ -198,7 +198,7 @@ impl<'a, S: PrecompileStorageProvider> StablecoinExchange<'a, S> {
     ) -> Result<(), TempoPrecompileError> {
         if token == LINKING_USD_ADDRESS {
             LinkingUSD::new(self.storage).transfer_from(
-                &self.address,
+                self.address,
                 ITIP20::transferFromCall {
                     from,
                     to: self.address,
@@ -207,7 +207,7 @@ impl<'a, S: PrecompileStorageProvider> StablecoinExchange<'a, S> {
             )?;
         } else {
             TIP20Token::from_address(token, self.storage).transfer_from(
-                &self.address,
+                self.address,
                 ITIP20::transferFromCall {
                     from,
                     to: self.address,
@@ -273,7 +273,7 @@ impl<'a, S: PrecompileStorageProvider> StablecoinExchange<'a, S> {
 
     pub fn swap_exact_amount_in(
         &mut self,
-        sender: &Address,
+        sender: Address,
         token_in: Address,
         token_out: Address,
         amount_in: u128,
@@ -283,7 +283,7 @@ impl<'a, S: PrecompileStorageProvider> StablecoinExchange<'a, S> {
         let route = self.find_trade_path(token_in, token_out)?;
 
         // Deduct input tokens from sender (only once, at the start)
-        self.decrement_balance_or_transfer_from(*sender, token_in, amount_in)?;
+        self.decrement_balance_or_transfer_from(sender, token_in, amount_in)?;
 
         // Execute swaps for each hop - intermediate balances are transitory
         let mut amount = amount_in;
@@ -297,14 +297,14 @@ impl<'a, S: PrecompileStorageProvider> StablecoinExchange<'a, S> {
             return Err(StablecoinExchangeError::insufficient_output().into());
         }
 
-        self.transfer(token_out, *sender, amount)?;
+        self.transfer(token_out, sender, amount)?;
 
         Ok(amount)
     }
 
     pub fn swap_exact_amount_out(
         &mut self,
-        sender: &Address,
+        sender: Address,
         token_in: Address,
         token_out: Address,
         amount_out: u128,
@@ -325,10 +325,10 @@ impl<'a, S: PrecompileStorageProvider> StablecoinExchange<'a, S> {
         }
 
         // Deduct input tokens ONCE at end
-        self.decrement_balance_or_transfer_from(*sender, token_in, amount)?;
+        self.decrement_balance_or_transfer_from(sender, token_in, amount)?;
 
         // Transfer only final output ONCE at end
-        self.transfer(token_out, *sender, amount_out)?;
+        self.transfer(token_out, sender, amount_out)?;
 
         Ok(amount)
     }
@@ -401,16 +401,16 @@ impl<'a, S: PrecompileStorageProvider> StablecoinExchange<'a, S> {
         Ok(book_keys)
     }
 
-    pub fn create_pair(&mut self, base: &Address) -> Result<B256, TempoPrecompileError> {
-        let quote = TIP20Token::from_address(*base, self.storage).quote_token()?;
+    pub fn create_pair(&mut self, base: Address) -> Result<B256, TempoPrecompileError> {
+        let quote = TIP20Token::from_address(base, self.storage).quote_token()?;
 
-        let book_key = compute_book_key(*base, quote);
+        let book_key = compute_book_key(base, quote);
 
         if Orderbook::exists(book_key, self.storage, self.address)? {
             return Err(StablecoinExchangeError::pair_already_exists().into());
         }
 
-        let book = Orderbook::new(*base, quote);
+        let book = Orderbook::new(base, quote);
         book.store(self.storage, self.address)?;
         self.push_to_book_keys(book_key)?;
 
@@ -419,7 +419,7 @@ impl<'a, S: PrecompileStorageProvider> StablecoinExchange<'a, S> {
             self.address,
             StablecoinExchangeEvents::PairCreated(IStablecoinExchange::PairCreated {
                 key: book_key,
-                base: *base,
+                base,
                 quote,
             })
             .into_log_data(),
@@ -443,7 +443,7 @@ impl<'a, S: PrecompileStorageProvider> StablecoinExchange<'a, S> {
     /// The assigned order ID
     pub fn place(
         &mut self,
-        sender: &Address,
+        sender: Address,
         token: Address,
         amount: u128,
         is_bid: bool,
@@ -476,14 +476,14 @@ impl<'a, S: PrecompileStorageProvider> StablecoinExchange<'a, S> {
         };
 
         // Debit from user's balance or transfer from wallet
-        self.decrement_balance_or_transfer_from(*sender, escrow_token, escrow_amount)?;
+        self.decrement_balance_or_transfer_from(sender, escrow_token, escrow_amount)?;
 
         // Create the order
         let order_id = self.increment_pending_order_id()?;
         let order = if is_bid {
-            Order::new_bid(order_id, *sender, book_key, amount, tick)
+            Order::new_bid(order_id, sender, book_key, amount, tick)
         } else {
-            Order::new_ask(order_id, *sender, book_key, amount, tick)
+            Order::new_ask(order_id, sender, book_key, amount, tick)
         };
 
         // Store in pending queue. Orders are stored as a DLL at each tick level and are initially
@@ -496,7 +496,7 @@ impl<'a, S: PrecompileStorageProvider> StablecoinExchange<'a, S> {
             self.address,
             StablecoinExchangeEvents::OrderPlaced(IStablecoinExchange::OrderPlaced {
                 orderId: order_id,
-                maker: *sender,
+                maker: sender,
                 token,
                 amount,
                 isBid: is_bid,
@@ -515,7 +515,7 @@ impl<'a, S: PrecompileStorageProvider> StablecoinExchange<'a, S> {
     /// For asks: flip_tick must be < tick
     pub fn place_flip(
         &mut self,
-        sender: &Address,
+        sender: Address,
         token: Address,
         amount: u128,
         is_bid: bool,
@@ -553,11 +553,11 @@ impl<'a, S: PrecompileStorageProvider> StablecoinExchange<'a, S> {
         };
 
         // Debit from user's balance or transfer from wallet
-        self.decrement_balance_or_transfer_from(*sender, escrow_token, escrow_amount)?;
+        self.decrement_balance_or_transfer_from(sender, escrow_token, escrow_amount)?;
 
         // Create the flip order
         let order_id = self.increment_pending_order_id()?;
-        let order = Order::new_flip(order_id, *sender, book_key, amount, tick, is_bid, flip_tick)
+        let order = Order::new_flip(order_id, sender, book_key, amount, tick, is_bid, flip_tick)
             .expect("Invalid flip tick");
 
         // Store in pending queue
@@ -568,7 +568,7 @@ impl<'a, S: PrecompileStorageProvider> StablecoinExchange<'a, S> {
             self.address,
             StablecoinExchangeEvents::FlipOrderPlaced(IStablecoinExchange::FlipOrderPlaced {
                 orderId: order_id,
-                maker: *sender,
+                maker: sender,
                 token,
                 amount,
                 isBid: is_bid,
@@ -584,9 +584,9 @@ impl<'a, S: PrecompileStorageProvider> StablecoinExchange<'a, S> {
     /// Process all pending orders into the active orderbook
     ///
     /// Only callable by the protocol via system transaction (sender must be Address::ZERO)
-    pub fn execute_block(&mut self, sender: &Address) -> Result<(), TempoPrecompileError> {
+    pub fn execute_block(&mut self, sender: Address) -> Result<(), TempoPrecompileError> {
         // Only protocol can call this
-        if *sender != Address::ZERO {
+        if sender != Address::ZERO {
             return Err(StablecoinExchangeError::unauthorized().into());
         }
 
@@ -770,7 +770,7 @@ impl<'a, S: PrecompileStorageProvider> StablecoinExchange<'a, S> {
             // Bid becomes Ask, Ask becomes Bid
             // The current tick becomes the new flip_tick, and flip_tick becomes the new tick
             let _ = self.place_flip(
-                &order.maker(),
+                order.maker(),
                 orderbook.base,
                 order.amount(),
                 !order.is_bid(),
@@ -958,14 +958,14 @@ impl<'a, S: PrecompileStorageProvider> StablecoinExchange<'a, S> {
 
     /// Cancel an order and refund tokens to maker
     /// Only the order maker can cancel their own order
-    pub fn cancel(&mut self, sender: &Address, order_id: u128) -> Result<(), TempoPrecompileError> {
+    pub fn cancel(&mut self, sender: Address, order_id: u128) -> Result<(), TempoPrecompileError> {
         let order = Order::from_storage(order_id, self.storage, self.address)?;
 
         if order.maker().is_zero() {
             return Err(StablecoinExchangeError::order_does_not_exist().into());
         }
 
-        if order.maker() != *sender {
+        if order.maker() != sender {
             return Err(StablecoinExchangeError::unauthorized().into());
         }
 
@@ -1455,8 +1455,8 @@ mod tests {
 
     fn setup_test_tokens<S: PrecompileStorageProvider>(
         storage: &mut S,
-        admin: &Address,
-        user: &Address,
+        admin: Address,
+        user: Address,
         exchange_address: Address,
         amount: u128,
     ) -> (Address, Address) {
@@ -1480,7 +1480,7 @@ mod tests {
             .mint(
                 admin,
                 ITIP20::mintCall {
-                    to: *user,
+                    to: user,
                     amount: U256::from(amount),
                 },
             )
@@ -1517,7 +1517,7 @@ mod tests {
         base.mint(
             admin,
             ITIP20::mintCall {
-                to: *user,
+                to: user,
                 amount: U256::from(amount),
             },
         )
@@ -1564,13 +1564,13 @@ mod tests {
 
         let (base_token, _quote_token) = setup_test_tokens(
             exchange.storage,
-            &admin,
-            &alice,
+            admin,
+            alice,
             exchange.address,
             expected_escrow,
         );
 
-        let result = exchange.place(&alice, base_token, amount, true, tick);
+        let result = exchange.place(alice, base_token, amount, true, tick);
         assert_eq!(
             result,
             Err(StablecoinExchangeError::pair_does_not_exist().into())
@@ -1596,20 +1596,20 @@ mod tests {
         // Setup tokens with enough balance for the escrow
         let (base_token, quote_token) = setup_test_tokens(
             exchange.storage,
-            &admin,
-            &alice,
+            admin,
+            alice,
             exchange.address,
             expected_escrow,
         );
 
         // Create the pair before placing orders
         exchange
-            .create_pair(&base_token)
+            .create_pair(base_token)
             .expect("Could not create pair");
 
         // Place the bid order
         let order_id = exchange
-            .place(&alice, base_token, amount, true, tick)
+            .place(alice, base_token, amount, true, tick)
             .expect("Place bid order should succeed");
 
         assert_eq!(order_id, 1);
@@ -1665,14 +1665,14 @@ mod tests {
 
         // Setup tokens with enough base token balance for the order
         let (base_token, quote_token) =
-            setup_test_tokens(exchange.storage, &admin, &alice, exchange.address, amount);
+            setup_test_tokens(exchange.storage, admin, alice, exchange.address, amount);
         // Create the pair before placing orders
         exchange
-            .create_pair(&base_token)
+            .create_pair(base_token)
             .expect("Could not create pair");
 
         let order_id = exchange
-            .place(&alice, base_token, amount, false, tick) // is_bid = false for ask
+            .place(alice, base_token, amount, false, tick) // is_bid = false for ask
             .expect("Place ask order should succeed");
 
         assert_eq!(order_id, 1);
@@ -1733,17 +1733,17 @@ mod tests {
         // Setup tokens with enough balance for the escrow
         let (base_token, quote_token) = setup_test_tokens(
             exchange.storage,
-            &admin,
-            &alice,
+            admin,
+            alice,
             exchange.address,
             expected_escrow,
         );
         exchange
-            .create_pair(&base_token)
+            .create_pair(base_token)
             .expect("Could not create pair");
 
         let order_id = exchange
-            .place_flip(&alice, base_token, amount, true, tick, flip_tick)
+            .place_flip(alice, base_token, amount, true, tick, flip_tick)
             .expect("Place flip bid order should succeed");
 
         assert_eq!(order_id, 1);
@@ -1805,19 +1805,19 @@ mod tests {
         // Setup tokens
         let (base_token, quote_token) = setup_test_tokens(
             exchange.storage,
-            &admin,
-            &alice,
+            admin,
+            alice,
             exchange.address,
             expected_escrow,
         );
 
         exchange
-            .create_pair(&base_token)
+            .create_pair(base_token)
             .expect("Could not create pair");
 
         // Place the bid order
         let order_id = exchange
-            .place(&alice, base_token, amount, true, tick)
+            .place(alice, base_token, amount, true, tick)
             .expect("Place bid order should succeed");
 
         // Verify order was placed and tokens were escrowed
@@ -1839,7 +1839,7 @@ mod tests {
 
         // Cancel the pending order
         exchange
-            .cancel(&alice, order_id)
+            .cancel(alice, order_id)
             .expect("Cancel pending order should succeed");
 
         // Verify order was deleted
@@ -1870,23 +1870,23 @@ mod tests {
         // Setup tokens with enough balance for two orders
         let (base_token, quote_token) = setup_test_tokens(
             exchange.storage,
-            &admin,
-            &alice,
+            admin,
+            alice,
             exchange.address,
             expected_escrow * 2,
         );
 
         // Create the pair
         exchange
-            .create_pair(&base_token)
+            .create_pair(base_token)
             .expect("Could not create pair");
 
         let order_id_0 = exchange
-            .place(&alice, base_token, amount, true, tick)
+            .place(alice, base_token, amount, true, tick)
             .expect("Swap should succeed");
 
         let order_id_1 = exchange
-            .place(&alice, base_token, amount, true, tick)
+            .place(alice, base_token, amount, true, tick)
             .expect("Swap should succeed");
         assert_eq!(order_id_0, 1);
         assert_eq!(order_id_1, 2);
@@ -1911,7 +1911,7 @@ mod tests {
 
         // Execute block and assert that orders have been linked
         exchange
-            .execute_block(&Address::ZERO)
+            .execute_block(Address::ZERO)
             .expect("Execute block should succeed");
 
         assert_eq!(exchange.active_order_id()?, 2);
@@ -1944,7 +1944,7 @@ mod tests {
         let mut exchange = StablecoinExchange::new(&mut storage);
         exchange.initialize().expect("Could not init exchange");
 
-        let result = exchange.execute_block(&Address::random());
+        let result = exchange.execute_block(Address::random());
         assert_eq!(result, Err(StablecoinExchangeError::unauthorized().into()));
     }
 
@@ -1964,22 +1964,22 @@ mod tests {
         // Setup tokens
         let (base_token, quote_token) = setup_test_tokens(
             exchange.storage,
-            &admin,
-            &alice,
+            admin,
+            alice,
             exchange.address,
             expected_escrow,
         );
         exchange
-            .create_pair(&base_token)
+            .create_pair(base_token)
             .expect("Could not create pair");
 
         // Place the bid order and cancel
         let order_id = exchange
-            .place(&alice, base_token, amount, true, tick)
+            .place(alice, base_token, amount, true, tick)
             .expect("Place bid order should succeed");
 
         exchange
-            .cancel(&alice, order_id)
+            .cancel(alice, order_id)
             .expect("Cancel pending order should succeed");
 
         assert_eq!(exchange.balance_of(alice, quote_token)?, expected_escrow);
@@ -2018,8 +2018,8 @@ mod tests {
 
         let (_base_token, quote_token) = setup_test_tokens(
             exchange.storage,
-            &admin,
-            &alice,
+            admin,
+            alice,
             exchange.address,
             1_000_000u128,
         );
@@ -2051,22 +2051,22 @@ mod tests {
 
         let (base_token, quote_token) = setup_test_tokens(
             exchange.storage,
-            &admin,
-            &alice,
+            admin,
+            alice,
             exchange.address,
             2_000_000u128,
         );
         exchange
-            .create_pair(&base_token)
+            .create_pair(base_token)
             .expect("Could not create pair");
 
         let order_amount = 1_000_000u128;
         exchange
-            .place(&alice, base_token, order_amount, false, tick)
+            .place(alice, base_token, order_amount, false, tick)
             .expect("Order should succeed");
 
         exchange
-            .execute_block(&Address::ZERO)
+            .execute_block(Address::ZERO)
             .expect("Execute block should succeed");
 
         let amount_in = exchange
@@ -2091,22 +2091,22 @@ mod tests {
 
         let (base_token, quote_token) = setup_test_tokens(
             exchange.storage,
-            &admin,
-            &alice,
+            admin,
+            alice,
             exchange.address,
             2_000_000u128,
         );
         exchange
-            .create_pair(&base_token)
+            .create_pair(base_token)
             .expect("Could not create pair");
 
         let order_amount = 1_000_000u128;
         exchange
-            .place(&alice, base_token, order_amount, true, tick)
+            .place(alice, base_token, order_amount, true, tick)
             .expect("Place bid order should succeed");
 
         exchange
-            .execute_block(&Address::ZERO)
+            .execute_block(Address::ZERO)
             .expect("Execute block should succeed");
 
         let amount_out = exchange
@@ -2132,23 +2132,23 @@ mod tests {
 
         let (base_token, quote_token) = setup_test_tokens(
             exchange.storage,
-            &admin,
-            &alice,
+            admin,
+            alice,
             exchange.address,
             2_000_000u128,
         );
         exchange
-            .create_pair(&base_token)
+            .create_pair(base_token)
             .expect("Could not create pair");
 
         // Alice places a bid: willing to BUY base using quote
         let order_amount = 1_000_000u128;
         exchange
-            .place(&alice, base_token, order_amount, true, tick)
+            .place(alice, base_token, order_amount, true, tick)
             .expect("Place bid order should succeed");
 
         exchange
-            .execute_block(&Address::ZERO)
+            .execute_block(Address::ZERO)
             .expect("Execute block should succeed");
 
         // Quote: sell base to get quote
@@ -2176,22 +2176,22 @@ mod tests {
 
         let (base_token, quote_token) = setup_test_tokens(
             exchange.storage,
-            &admin,
-            &alice,
+            admin,
+            alice,
             exchange.address,
             2_000_000u128,
         );
         exchange
-            .create_pair(&base_token)
+            .create_pair(base_token)
             .expect("Could not create pair");
 
         let order_amount = 1_000_000u128;
         exchange
-            .place(&alice, base_token, order_amount, false, tick)
+            .place(alice, base_token, order_amount, false, tick)
             .expect("Order should succeed");
 
         exchange
-            .execute_block(&Address::ZERO)
+            .execute_block(Address::ZERO)
             .expect("Execute block should succeed");
 
         exchange
@@ -2202,7 +2202,7 @@ mod tests {
         let max_amount_in = (amount_out * price as u128) / orderbook::PRICE_SCALE as u128;
 
         let amount_in = exchange
-            .swap_exact_amount_out(&bob, quote_token, base_token, amount_out, max_amount_in)
+            .swap_exact_amount_out(bob, quote_token, base_token, amount_out, max_amount_in)
             .expect("Swap should succeed");
 
         let mut base_tip20 = TIP20Token::from_address(base_token, exchange.storage);
@@ -2229,22 +2229,22 @@ mod tests {
 
         let (base_token, quote_token) = setup_test_tokens(
             exchange.storage,
-            &admin,
-            &alice,
+            admin,
+            alice,
             exchange.address,
             2_000_000u128,
         );
         exchange
-            .create_pair(&base_token)
+            .create_pair(base_token)
             .expect("Could not create pair");
 
         let order_amount = 1_000_000u128;
         exchange
-            .place(&alice, base_token, order_amount, true, tick)
+            .place(alice, base_token, order_amount, true, tick)
             .expect("Order should succeed");
 
         exchange
-            .execute_block(&Address::ZERO)
+            .execute_block(Address::ZERO)
             .expect("Execute block should succeed");
 
         exchange
@@ -2255,7 +2255,7 @@ mod tests {
         let min_amount_out = (amount_in * price as u128) / orderbook::PRICE_SCALE as u128;
 
         let amount_out = exchange
-            .swap_exact_amount_in(&bob, base_token, quote_token, amount_in, min_amount_out)
+            .swap_exact_amount_in(bob, base_token, quote_token, amount_in, min_amount_out)
             .expect("Swap should succeed");
 
         let mut quote_tip20 = TIP20Token::from_address(quote_token, exchange.storage);
@@ -2286,22 +2286,22 @@ mod tests {
 
         let (base_token, quote_token) = setup_test_tokens(
             exchange.storage,
-            &admin,
-            &alice,
+            admin,
+            alice,
             exchange.address,
             expected_escrow * 2,
         );
         exchange
-            .create_pair(&base_token)
+            .create_pair(base_token)
             .expect("Could not create pair");
 
         // Place a flip bid order
         let flip_order_id = exchange
-            .place_flip(&alice, base_token, amount, true, tick, flip_tick)
+            .place_flip(alice, base_token, amount, true, tick, flip_tick)
             .expect("Place flip order should succeed");
 
         exchange
-            .execute_block(&Address::ZERO)
+            .execute_block(Address::ZERO)
             .expect("Execute block should succeed");
 
         exchange
@@ -2309,7 +2309,7 @@ mod tests {
             .expect("Could not set balance");
 
         exchange
-            .swap_exact_amount_in(&bob, base_token, quote_token, amount, 0)
+            .swap_exact_amount_in(bob, base_token, quote_token, amount, 0)
             .expect("Swap should succeed");
 
         // Assert that the order has filled
@@ -2342,15 +2342,15 @@ mod tests {
         // Setup tokens
         let (base_token, quote_token) = setup_test_tokens(
             exchange.storage,
-            &admin,
-            &alice,
+            admin,
+            alice,
             exchange.address,
             1_000_000u128,
         );
 
         // Create the pair
         let key = exchange
-            .create_pair(&base_token)
+            .create_pair(base_token)
             .expect("Could not create pair");
 
         // Verify PairCreated event was emitted
@@ -2379,17 +2379,17 @@ mod tests {
         // Setup tokens
         let (base_token, _) = setup_test_tokens(
             exchange.storage,
-            &admin,
-            &alice,
+            admin,
+            alice,
             exchange.address,
             1_000_000u128,
         );
 
         exchange
-            .create_pair(&base_token)
+            .create_pair(base_token)
             .expect("Could not create pair");
 
-        let result = exchange.create_pair(&base_token);
+        let result = exchange.create_pair(base_token);
         assert_eq!(
             result,
             Err(StablecoinExchangeError::pair_already_exists().into())
@@ -2431,14 +2431,14 @@ mod tests {
         let linking_usd_addr = {
             let mut linking_usd = LinkingUSD::new(exchange.storage);
             linking_usd
-                .initialize(&admin)
+                .initialize(admin)
                 .expect("Failed to initialize LinkingUSD");
             linking_usd.token.token_address
         };
 
         let usdc_addr = {
             let mut usdc = TIP20Token::new(2, exchange.storage);
-            usdc.initialize("USDC", "USDC", "USD", linking_usd_addr, &admin)
+            usdc.initialize("USDC", "USDC", "USD", linking_usd_addr, admin)
                 .expect("Failed to initialize USDC");
             usdc.token_address
         };
@@ -2446,7 +2446,7 @@ mod tests {
         let token_a_addr = {
             let mut token_a = TIP20Token::new(3, exchange.storage);
             token_a
-                .initialize("TokenA", "TKA", "USD", usdc_addr, &admin)
+                .initialize("TokenA", "TKA", "USD", usdc_addr, admin)
                 .expect("Failed to initialize TokenA");
             token_a.token_address
         };
@@ -2476,8 +2476,8 @@ mod tests {
 
         let (token, _) = setup_test_tokens(
             exchange.storage,
-            &admin,
-            &user,
+            admin,
+            user,
             exchange.address,
             1_000_000u128,
         );
@@ -2505,14 +2505,14 @@ mod tests {
         // Setup: LinkingUSD <- Token (direct pair)
         let (token, linking_usd) = setup_test_tokens(
             exchange.storage,
-            &admin,
-            &user,
+            admin,
+            user,
             exchange.address,
             1_000_000u128,
         );
 
         // Create the pair first
-        exchange.create_pair(&token).expect("Failed to create pair");
+        exchange.create_pair(token).expect("Failed to create pair");
 
         // Trade token -> linking_usd (direct pair)
         let route = exchange
@@ -2544,14 +2544,14 @@ mod tests {
         // Setup: LinkingUSD <- Token
         let (token, linking_usd) = setup_test_tokens(
             exchange.storage,
-            &admin,
-            &user,
+            admin,
+            user,
             exchange.address,
             1_000_000u128,
         );
 
         // Create the pair first
-        exchange.create_pair(&token).expect("Failed to create pair");
+        exchange.create_pair(token).expect("Failed to create pair");
 
         // Trade linking_usd -> token (reverse direction)
         let route = exchange
@@ -2585,31 +2585,31 @@ mod tests {
         let linking_usd_addr = {
             let mut linking_usd = LinkingUSD::new(exchange.storage);
             linking_usd
-                .initialize(&admin)
+                .initialize(admin)
                 .expect("Failed to initialize LinkingUSD");
             linking_usd.token.token_address
         };
 
         let usdc_addr = {
             let mut usdc = TIP20Token::new(2, exchange.storage);
-            usdc.initialize("USDC", "USDC", "USD", linking_usd_addr, &admin)
+            usdc.initialize("USDC", "USDC", "USD", linking_usd_addr, admin)
                 .expect("Failed to initialize USDC");
             usdc.token_address
         };
 
         let eurc_addr = {
             let mut eurc = TIP20Token::new(3, exchange.storage);
-            eurc.initialize("EURC", "EURC", "USD", linking_usd_addr, &admin)
+            eurc.initialize("EURC", "EURC", "USD", linking_usd_addr, admin)
                 .expect("Failed to initialize EURC");
             eurc.token_address
         };
 
         // Create pairs first
         exchange
-            .create_pair(&usdc_addr)
+            .create_pair(usdc_addr)
             .expect("Failed to create USDC pair");
         exchange
-            .create_pair(&eurc_addr)
+            .create_pair(eurc_addr)
             .expect("Failed to create EURC pair");
 
         // Trade USDC -> EURC should go through LinkingUSD
@@ -2651,40 +2651,40 @@ mod tests {
         let linking_usd_addr = {
             let mut linking_usd = LinkingUSD::new(exchange.storage);
             linking_usd
-                .initialize(&admin)
+                .initialize(admin)
                 .expect("Failed to initialize LinkingUSD");
             linking_usd.token.token_address
         };
 
         let usdc_addr = {
             let mut usdc = TIP20Token::new(2, exchange.storage);
-            usdc.initialize("USDC", "USDC", "USD", linking_usd_addr, &admin)
+            usdc.initialize("USDC", "USDC", "USD", linking_usd_addr, admin)
                 .expect("Failed to initialize USDC");
             usdc.token_address
         };
 
         let eurc_addr = {
             let mut eurc = TIP20Token::new(3, exchange.storage);
-            eurc.initialize("EURC", "EURC", "USD", linking_usd_addr, &admin)
+            eurc.initialize("EURC", "EURC", "USD", linking_usd_addr, admin)
                 .expect("Failed to initialize EURC");
             eurc.token_address
         };
 
         // Create pairs
         exchange
-            .create_pair(&usdc_addr)
+            .create_pair(usdc_addr)
             .expect("Failed to create USDC pair");
         exchange
-            .create_pair(&eurc_addr)
+            .create_pair(eurc_addr)
             .expect("Failed to create EURC pair");
 
         // Setup tokens and roles
         {
             let mut usdc = TIP20Token::new(2, exchange.storage);
             let mut usdc_roles = usdc.get_roles_contract();
-            usdc_roles.grant_role_internal(&admin, *ISSUER_ROLE)?;
+            usdc_roles.grant_role_internal(admin, *ISSUER_ROLE)?;
             usdc.mint(
-                &admin,
+                admin,
                 ITIP20::mintCall {
                     to: alice,
                     amount: U256::from(10_000_000u128),
@@ -2696,9 +2696,9 @@ mod tests {
         {
             let mut eurc = TIP20Token::new(3, exchange.storage);
             let mut eurc_roles = eurc.get_roles_contract();
-            eurc_roles.grant_role_internal(&admin, *ISSUER_ROLE)?;
+            eurc_roles.grant_role_internal(admin, *ISSUER_ROLE)?;
             eurc.mint(
-                &admin,
+                admin,
                 ITIP20::mintCall {
                     to: alice,
                     amount: U256::from(10_000_000u128),
@@ -2710,11 +2710,11 @@ mod tests {
         {
             let mut linking_usd = LinkingUSD::new(exchange.storage);
             let mut linking_usd_roles = linking_usd.get_roles_contract();
-            linking_usd_roles.grant_role_internal(&admin, *ISSUER_ROLE)?;
+            linking_usd_roles.grant_role_internal(admin, *ISSUER_ROLE)?;
             linking_usd
                 .token
                 .mint(
-                    &admin,
+                    admin,
                     ITIP20::mintCall {
                         to: alice,
                         amount: U256::from(10_000_000u128),
@@ -2727,7 +2727,7 @@ mod tests {
         {
             let mut usdc = TIP20Token::new(2, exchange.storage);
             usdc.approve(
-                &alice,
+                alice,
                 ITIP20::approveCall {
                     spender: exchange.address,
                     amount: U256::from(10_000_000u128),
@@ -2739,7 +2739,7 @@ mod tests {
         {
             let mut eurc = TIP20Token::new(3, exchange.storage);
             eurc.approve(
-                &alice,
+                alice,
                 ITIP20::approveCall {
                     spender: exchange.address,
                     amount: U256::from(10_000_000u128),
@@ -2753,7 +2753,7 @@ mod tests {
             linking_usd
                 .token
                 .approve(
-                    &alice,
+                    alice,
                     ITIP20::approveCall {
                         spender: exchange.address,
                         amount: U256::from(10_000_000u128),
@@ -2769,16 +2769,16 @@ mod tests {
 
         // USDC bid: buy USDC with LinkingUSD
         exchange
-            .place(&alice, usdc_addr, 5_000_000u128, true, 0)
+            .place(alice, usdc_addr, 5_000_000u128, true, 0)
             .expect("Failed to place USDC bid order");
 
         // EURC ask: sell EURC for LinkingUSD
         exchange
-            .place(&alice, eurc_addr, 5_000_000u128, false, 0)
+            .place(alice, eurc_addr, 5_000_000u128, false, 0)
             .expect("Failed to place EURC ask order");
 
         exchange
-            .execute_block(&Address::ZERO)
+            .execute_block(Address::ZERO)
             .expect("Failed to execute block");
 
         // Quote multi-hop: USDC -> LinkingUSD -> EURC
@@ -2810,39 +2810,39 @@ mod tests {
         let linking_usd_addr = {
             let mut linking_usd = LinkingUSD::new(exchange.storage);
             linking_usd
-                .initialize(&admin)
+                .initialize(admin)
                 .expect("Failed to initialize LinkingUSD");
             linking_usd.token.token_address
         };
 
         let usdc_addr = {
             let mut usdc = TIP20Token::new(2, exchange.storage);
-            usdc.initialize("USDC", "USDC", "USD", linking_usd_addr, &admin)
+            usdc.initialize("USDC", "USDC", "USD", linking_usd_addr, admin)
                 .expect("Failed to initialize USDC");
             usdc.token_address
         };
 
         let eurc_addr = {
             let mut eurc = TIP20Token::new(3, exchange.storage);
-            eurc.initialize("EURC", "EURC", "USD", linking_usd_addr, &admin)
+            eurc.initialize("EURC", "EURC", "USD", linking_usd_addr, admin)
                 .expect("Failed to initialize EURC");
             eurc.token_address
         };
 
         // Create pairs and setup (same as previous test)
         exchange
-            .create_pair(&usdc_addr)
+            .create_pair(usdc_addr)
             .expect("Failed to create USDC pair");
         exchange
-            .create_pair(&eurc_addr)
+            .create_pair(eurc_addr)
             .expect("Failed to create EURC pair");
 
         {
             let mut usdc = TIP20Token::new(2, exchange.storage);
             let mut usdc_roles = usdc.get_roles_contract();
-            usdc_roles.grant_role_internal(&admin, *ISSUER_ROLE)?;
+            usdc_roles.grant_role_internal(admin, *ISSUER_ROLE)?;
             usdc.mint(
-                &admin,
+                admin,
                 ITIP20::mintCall {
                     to: alice,
                     amount: U256::from(10_000_000u128),
@@ -2850,7 +2850,7 @@ mod tests {
             )
             .expect("Failed to mint USDC");
             usdc.approve(
-                &alice,
+                alice,
                 ITIP20::approveCall {
                     spender: exchange.address,
                     amount: U256::from(10_000_000u128),
@@ -2862,9 +2862,9 @@ mod tests {
         {
             let mut eurc = TIP20Token::new(3, exchange.storage);
             let mut eurc_roles = eurc.get_roles_contract();
-            eurc_roles.grant_role_internal(&admin, *ISSUER_ROLE)?;
+            eurc_roles.grant_role_internal(admin, *ISSUER_ROLE)?;
             eurc.mint(
-                &admin,
+                admin,
                 ITIP20::mintCall {
                     to: alice,
                     amount: U256::from(10_000_000u128),
@@ -2872,7 +2872,7 @@ mod tests {
             )
             .expect("Failed to mint EURC");
             eurc.approve(
-                &alice,
+                alice,
                 ITIP20::approveCall {
                     spender: exchange.address,
                     amount: U256::from(10_000_000u128),
@@ -2884,11 +2884,11 @@ mod tests {
         {
             let mut linking_usd = LinkingUSD::new(exchange.storage);
             let mut linking_usd_roles = linking_usd.get_roles_contract();
-            linking_usd_roles.grant_role_internal(&admin, *ISSUER_ROLE)?;
+            linking_usd_roles.grant_role_internal(admin, *ISSUER_ROLE)?;
             linking_usd
                 .token
                 .mint(
-                    &admin,
+                    admin,
                     ITIP20::mintCall {
                         to: alice,
                         amount: U256::from(10_000_000u128),
@@ -2898,7 +2898,7 @@ mod tests {
             linking_usd
                 .token
                 .approve(
-                    &alice,
+                    alice,
                     ITIP20::approveCall {
                         spender: exchange.address,
                         amount: U256::from(10_000_000u128),
@@ -2909,14 +2909,14 @@ mod tests {
 
         // Place orders at 1:1 rate
         exchange
-            .place(&alice, usdc_addr, 5_000_000u128, true, 0)
+            .place(alice, usdc_addr, 5_000_000u128, true, 0)
             .expect("Failed to place USDC bid order");
         exchange
-            .place(&alice, eurc_addr, 5_000_000u128, false, 0)
+            .place(alice, eurc_addr, 5_000_000u128, false, 0)
             .expect("Failed to place EURC ask order");
 
         exchange
-            .execute_block(&Address::ZERO)
+            .execute_block(Address::ZERO)
             .expect("Failed to execute block");
 
         // Quote multi-hop for exact output: USDC -> LinkingUSD -> EURC
@@ -2948,39 +2948,39 @@ mod tests {
         let linking_usd_addr = {
             let mut linking_usd = LinkingUSD::new(exchange.storage);
             linking_usd
-                .initialize(&admin)
+                .initialize(admin)
                 .expect("Failed to initialize LinkingUSD");
             linking_usd.token.token_address
         };
 
         let usdc_addr = {
             let mut usdc = TIP20Token::new(2, exchange.storage);
-            usdc.initialize("USDC", "USDC", "USD", linking_usd_addr, &admin)
+            usdc.initialize("USDC", "USDC", "USD", linking_usd_addr, admin)
                 .expect("Failed to initialize USDC");
             usdc.token_address
         };
 
         let eurc_addr = {
             let mut eurc = TIP20Token::new(3, exchange.storage);
-            eurc.initialize("EURC", "EURC", "USD", linking_usd_addr, &admin)
+            eurc.initialize("EURC", "EURC", "USD", linking_usd_addr, admin)
                 .expect("Failed to initialize EURC");
             eurc.token_address
         };
 
         exchange
-            .create_pair(&usdc_addr)
+            .create_pair(usdc_addr)
             .expect("Failed to create USDC pair");
         exchange
-            .create_pair(&eurc_addr)
+            .create_pair(eurc_addr)
             .expect("Failed to create EURC pair");
 
         // Setup alice as liquidity provider
         {
             let mut usdc = TIP20Token::new(2, exchange.storage);
             let mut usdc_roles = usdc.get_roles_contract();
-            usdc_roles.grant_role_internal(&admin, *ISSUER_ROLE)?;
+            usdc_roles.grant_role_internal(admin, *ISSUER_ROLE)?;
             usdc.mint(
-                &admin,
+                admin,
                 ITIP20::mintCall {
                     to: alice,
                     amount: U256::from(10_000_000u128),
@@ -2988,7 +2988,7 @@ mod tests {
             )
             .expect("Failed to mint USDC");
             usdc.approve(
-                &alice,
+                alice,
                 ITIP20::approveCall {
                     spender: exchange.address,
                     amount: U256::from(10_000_000u128),
@@ -3000,9 +3000,9 @@ mod tests {
         {
             let mut eurc = TIP20Token::new(3, exchange.storage);
             let mut eurc_roles = eurc.get_roles_contract();
-            eurc_roles.grant_role_internal(&admin, *ISSUER_ROLE)?;
+            eurc_roles.grant_role_internal(admin, *ISSUER_ROLE)?;
             eurc.mint(
-                &admin,
+                admin,
                 ITIP20::mintCall {
                     to: alice,
                     amount: U256::from(10_000_000u128),
@@ -3010,7 +3010,7 @@ mod tests {
             )
             .expect("Failed to mint EURC");
             eurc.approve(
-                &alice,
+                alice,
                 ITIP20::approveCall {
                     spender: exchange.address,
                     amount: U256::from(10_000_000u128),
@@ -3022,9 +3022,9 @@ mod tests {
         {
             let mut linking_usd = LinkingUSD::new(exchange.storage);
             let mut linking_usd_roles = linking_usd.get_roles_contract();
-            linking_usd_roles.grant_role_internal(&admin, *ISSUER_ROLE)?;
+            linking_usd_roles.grant_role_internal(admin, *ISSUER_ROLE)?;
             linking_usd.token.mint(
-                &admin,
+                admin,
                 ITIP20::mintCall {
                     to: alice,
                     amount: U256::from(10_000_000u128),
@@ -3032,7 +3032,7 @@ mod tests {
             )?;
 
             linking_usd.token.approve(
-                &alice,
+                alice,
                 ITIP20::approveCall {
                     spender: exchange.address,
                     amount: U256::from(10_000_000u128),
@@ -3044,7 +3044,7 @@ mod tests {
         {
             let mut usdc = TIP20Token::new(2, exchange.storage);
             usdc.mint(
-                &admin,
+                admin,
                 ITIP20::mintCall {
                     to: bob,
                     amount: U256::from(10_000_000u128),
@@ -3052,7 +3052,7 @@ mod tests {
             )?;
 
             usdc.approve(
-                &bob,
+                bob,
                 ITIP20::approveCall {
                     spender: exchange.address,
                     amount: U256::from(10_000_000u128),
@@ -3062,13 +3062,13 @@ mod tests {
 
         // Place liquidity orders at 1:1
         exchange
-            .place(&alice, usdc_addr, 5_000_000u128, true, 0)
+            .place(alice, usdc_addr, 5_000_000u128, true, 0)
             .expect("Failed to place USDC bid order");
         exchange
-            .place(&alice, eurc_addr, 5_000_000u128, false, 0)
+            .place(alice, eurc_addr, 5_000_000u128, false, 0)
             .expect("Failed to place EURC ask order");
         exchange
-            .execute_block(&Address::ZERO)
+            .execute_block(Address::ZERO)
             .expect("Failed to execute block");
 
         // Check bob's balances before swap
@@ -3085,7 +3085,7 @@ mod tests {
         let amount_in = 1_000_000u128;
         let amount_out = exchange
             .swap_exact_amount_in(
-                &bob, usdc_addr, eurc_addr, amount_in, 0, // min_amount_out
+                bob, usdc_addr, eurc_addr, amount_in, 0, // min_amount_out
             )
             .expect("Should execute multi-hop swap");
 
@@ -3149,39 +3149,39 @@ mod tests {
         let linking_usd_addr = {
             let mut linking_usd = LinkingUSD::new(exchange.storage);
             linking_usd
-                .initialize(&admin)
+                .initialize(admin)
                 .expect("Failed to initialize LinkingUSD");
             linking_usd.token.token_address
         };
 
         let usdc_addr = {
             let mut usdc = TIP20Token::new(2, exchange.storage);
-            usdc.initialize("USDC", "USDC", "USD", linking_usd_addr, &admin)
+            usdc.initialize("USDC", "USDC", "USD", linking_usd_addr, admin)
                 .expect("Failed to initialize USDC");
             usdc.token_address
         };
 
         let eurc_addr = {
             let mut eurc = TIP20Token::new(3, exchange.storage);
-            eurc.initialize("EURC", "EURC", "USD", linking_usd_addr, &admin)
+            eurc.initialize("EURC", "EURC", "USD", linking_usd_addr, admin)
                 .expect("Failed to initialize EURC");
             eurc.token_address
         };
 
         exchange
-            .create_pair(&usdc_addr)
+            .create_pair(usdc_addr)
             .expect("Failed to create USDC pair");
         exchange
-            .create_pair(&eurc_addr)
+            .create_pair(eurc_addr)
             .expect("Failed to create EURC pair");
 
         // Setup alice as liquidity provider
         {
             let mut usdc = TIP20Token::new(2, exchange.storage);
             let mut usdc_roles = usdc.get_roles_contract();
-            usdc_roles.grant_role_internal(&admin, *ISSUER_ROLE)?;
+            usdc_roles.grant_role_internal(admin, *ISSUER_ROLE)?;
             usdc.mint(
-                &admin,
+                admin,
                 ITIP20::mintCall {
                     to: alice,
                     amount: U256::from(10_000_000u128),
@@ -3189,7 +3189,7 @@ mod tests {
             )
             .expect("Failed to mint USDC");
             usdc.approve(
-                &alice,
+                alice,
                 ITIP20::approveCall {
                     spender: exchange.address,
                     amount: U256::from(10_000_000u128),
@@ -3201,9 +3201,9 @@ mod tests {
         {
             let mut eurc = TIP20Token::new(3, exchange.storage);
             let mut eurc_roles = eurc.get_roles_contract();
-            eurc_roles.grant_role_internal(&admin, *ISSUER_ROLE)?;
+            eurc_roles.grant_role_internal(admin, *ISSUER_ROLE)?;
             eurc.mint(
-                &admin,
+                admin,
                 ITIP20::mintCall {
                     to: alice,
                     amount: U256::from(10_000_000u128),
@@ -3211,7 +3211,7 @@ mod tests {
             )
             .expect("Failed to mint EURC");
             eurc.approve(
-                &alice,
+                alice,
                 ITIP20::approveCall {
                     spender: exchange.address,
                     amount: U256::from(10_000_000u128),
@@ -3223,11 +3223,11 @@ mod tests {
         {
             let mut linking_usd = LinkingUSD::new(exchange.storage);
             let mut linking_usd_roles = linking_usd.get_roles_contract();
-            linking_usd_roles.grant_role_internal(&admin, *ISSUER_ROLE)?;
+            linking_usd_roles.grant_role_internal(admin, *ISSUER_ROLE)?;
             linking_usd
                 .token
                 .mint(
-                    &admin,
+                    admin,
                     ITIP20::mintCall {
                         to: alice,
                         amount: U256::from(10_000_000u128),
@@ -3237,7 +3237,7 @@ mod tests {
             linking_usd
                 .token
                 .approve(
-                    &alice,
+                    alice,
                     ITIP20::approveCall {
                         spender: exchange.address,
                         amount: U256::from(10_000_000u128),
@@ -3250,7 +3250,7 @@ mod tests {
         {
             let mut usdc = TIP20Token::new(2, exchange.storage);
             usdc.mint(
-                &admin,
+                admin,
                 ITIP20::mintCall {
                     to: bob,
                     amount: U256::from(10_000_000u128),
@@ -3258,7 +3258,7 @@ mod tests {
             )
             .expect("Failed to mint USDC for bob");
             usdc.approve(
-                &bob,
+                bob,
                 ITIP20::approveCall {
                     spender: exchange.address,
                     amount: U256::from(10_000_000u128),
@@ -3269,13 +3269,13 @@ mod tests {
 
         // Place liquidity orders at 1:1
         exchange
-            .place(&alice, usdc_addr, 5_000_000u128, true, 0)
+            .place(alice, usdc_addr, 5_000_000u128, true, 0)
             .expect("Failed to place USDC bid order");
         exchange
-            .place(&alice, eurc_addr, 5_000_000u128, false, 0)
+            .place(alice, eurc_addr, 5_000_000u128, false, 0)
             .expect("Failed to place EURC ask order");
         exchange
-            .execute_block(&Address::ZERO)
+            .execute_block(Address::ZERO)
             .expect("Failed to execute block");
 
         // Check bob's balances before swap
@@ -3291,7 +3291,7 @@ mod tests {
         // Execute multi-hop swap: USDC -> LinkingUSD -> EURC (exact output)
         let amount_out = 90u128;
         let amount_in = exchange.swap_exact_amount_out(
-            &bob,
+            bob,
             usdc_addr,
             eurc_addr,
             amount_out,
